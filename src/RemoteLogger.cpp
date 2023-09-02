@@ -1,26 +1,28 @@
 #include "RemoteLogger.h"
 
-void RemoteLogger::maybeResolve() {
+bool RemoteLogger::maybeResolve() {
   unsigned long now = millis();
-  if ((now - last_ip_resolved_millis_) < REMOTE_LOG_IP_TTL_MS) {
+  if (last_ip_resolved_millis_ != 0 && (now - last_ip_resolved_millis_) < REMOTE_LOG_IP_TTL_MS) {
     // Last entry is still considered valid
-    return;
+    return true;
   }
 
-  if(WiFi.hostByName(dest_host_, dest_ip_) == 1) {
+  if (WiFi.hostByName(dest_host_, dest_ip_) == 1) {
     last_ip_resolved_millis_ = millis();
+    return true;
   }
+  return false;
 }
 
 int RemoteLogger::send(const char *buffer, size_t buffer_size, IPAddress destination,
-                           uint16_t port) {
+                       uint16_t port) {
   size_t written = 0;
   // Note that beginPacket/endPacket treat `1` as success so we invert it on return to follow normal conventions
-  if(udp_.beginPacket(dest_ip_, dest_port_) == 1) {
-    written = udp_.write((const uint8_t*)buffer, buffer_size);
-    if(written == buffer_size && udp_.endPacket() == 1) {
+  if (udp_.beginPacket(dest_ip_, dest_port_) == 1) {
+    written = udp_.write((const uint8_t *)buffer, buffer_size);
+    if (written == buffer_size && udp_.endPacket() == 1) {
       Serial.printf("Wrote %d/%d bytes of log to %s:%d\n", written, buffer_size,
-                  dest_ip_.toString().c_str(), dest_port_);
+                    dest_ip_.toString().c_str(), dest_port_);
       return 0;
     }
   }
@@ -38,8 +40,7 @@ void RemoteLogger::log(const char *msg, LogLevel level) {
     return;
   }
 
-  int written =
-      snprintf(buf_, sizeof(buf_) - 1, "<%u>%s app: %s", 8 + level, my_hostname_, msg);
+  int written = snprintf(buf_, sizeof(buf_) - 1, "<%u>%s app: %s", 8 + level, my_hostname_, msg);
 
   // Ensure newline termination for syslog. We only allow writing `sizeof(buf_) - 1` to ensure
   // this doesn't exceed the buffer length
@@ -49,7 +50,9 @@ void RemoteLogger::log(const char *msg, LogLevel level) {
     written++;
   }
 
-  this->maybeResolve();
+  if (!this->maybeResolve()) {
+    return;
+  }
   if (send(buf_, written, dest_ip_, dest_port_) != 0 && WiFi.status() == WL_CONNECTED) {
     // If the initial `send` fails and wifi is connected, try again
     // If the retry fails, close the socket so we'll re-open on the first attempt next time

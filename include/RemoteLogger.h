@@ -21,8 +21,7 @@ enum LogLevel {
 
 class RemoteLogger {
 public:
-  explicit RemoteLogger(const char *my_hostname, const char *dest_host,
-                            uint16_t dest_port = 514)
+  explicit RemoteLogger(const char *my_hostname, const char *dest_host, uint16_t dest_port = 514)
       : dest_port_(dest_port) {
     assert(strnlen(my_hostname, sizeof(my_hostname_)) < sizeof(my_hostname_));
     strncpy(my_hostname_, my_hostname, sizeof(my_hostname_) - 1);
@@ -34,8 +33,6 @@ public:
   void log(const char *msg, LogLevel level);
 
 protected:
-
-
 private:
   char my_hostname_[32];
   char dest_host_[128];
@@ -47,6 +44,6 @@ private:
   WiFiUDP udp_;
   IPAddress dest_ip_;
 
-  void maybeResolve();
+  bool maybeResolve();
   int send(const char *, size_t, IPAddress, uint16_t);
 };

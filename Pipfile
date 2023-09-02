@@ -1,0 +1,11 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+matplotlib = "3.7.2"
+pytz = "*"
+
+[requires]
+python_version = "3.9"

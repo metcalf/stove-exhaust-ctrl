@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include <WiFi.h>
 
-#include <PMS.h>
+//#include <PMS.h>
+#include <PMserial.h>
 #include <SparkFun_SGP40_Arduino_Library.h>
 #include <UMS3.h>
 //#include <sensiron_voc_algorithm.h>
@@ -11,12 +12,9 @@
 #include "RemoteLogger.h"
 #include "wifi_credentials.h"
 
-#include "nvs.h"
-#include "nvs_flash.h"
-
 // TODO
-#define PMS_RX 1
-#define PMS_TX 2
+#define PMS_RX 2
+#define PMS_TX 1
 
 #define VOC_POLL_INTERVAL_MS 1 * 1000
 #define PMS_POLL_INTERVAL_MS 15 * 1000
@@ -28,8 +26,7 @@
 
 RemoteLogger *remoteLogger;
 
-HardwareSerial pmsSerial(2);
-PMS pms(pmsSerial);
+SerialPM pms(PMSx003, PMS_RX, PMS_TX);
 UMS3 ums3;
 
 SGP40 sgp;
@@ -44,7 +41,7 @@ void pms_wake() {
     return;
   }
 
-  pms.wakeUp();
+  pms.wake();
   pmsSleeping = false;
   lastPMSMillis = pmsStartMillis = millis();
 }
@@ -60,6 +57,7 @@ void pms_sleep() {
 
 void setup() {
   Serial.begin(115200);
+  // Serial.setDebugOutput(true);
   Serial.println("Booting");
 
   ums3.begin();
@@ -67,12 +65,14 @@ void setup() {
   ums3.setPixelColor(UMS3::color(0, 0, 255)); // Blue
 
   // Set these in gitignored file include/wifi_credentials.h
+  WiFi.disconnect();
   WiFi.begin(wifi_ssid, wifi_pass);
+  WiFi.setTxPower(WIFI_POWER_13dBm);
 
   remoteLogger = new RemoteLogger("stove-exhaust-ctrl", "home-logger-local.itsshedtime.com");
 
-  pmsSerial.begin(9600, SERIAL_8N1, PMS_RX, PMS_TX);
-  pms_wake();
+  pms.init();
+  pms_sleep();
 
   Wire.begin();
   if (!sgp.begin()) {
@@ -89,7 +89,6 @@ void setup() {
 void loop() {
   uint16_t voc_ticks;
   int32_t voc_index;
-  PMS::DATA data;
 
   // Poll the VOC sensor at a consistent rate for the VOC index algorithm
   unsigned long time_since_voc_millis = millis() - lastVOCMillis;
@@ -110,7 +109,7 @@ void loop() {
 
   wl_status_t wifi_status = WiFi.status();
   if (wifi_status != WL_CONNECTED) {
-    if (wifi_status == WL_IDLE_STATUS) {
+    if (wifi_status == WL_IDLE_STATUS || wifi_status == WL_CONNECT_FAILED) {
       WiFi.begin(wifi_ssid, wifi_pass);
     }
     ums3.setPixelColor(UMS3::color(255, 0, 0)); // Red
@@ -124,22 +123,30 @@ void loop() {
   pms_wake();
 
   if (now - pmsStartMillis < PMS_WARMUP_MS) {
+    Serial.println("warming up");
     // Sensor isn't ready yet
     return;
   }
   if (now - lastPMSMillis < PMS_POLL_INTERVAL_MS) {
+    Serial.println("waiting to poll PMS");
     // Not time to take a reading yet
     return;
   }
 
-  if (!pms.read(data)) {
-    Serial.printf("PMS error\n");
+  SerialPM::STATUS pms_status = pms.read();
+  if (pms_status != SerialPM::STATUS::OK) {
+    Serial.printf("PMS error: %d\n", pms_status);
     return;
   }
+  if (!pms.has_particulate_matter()) {
+    Serial.println("Could not decode PM measurement");
+    return;
+  }
+  lastPMSMillis = now;
 
   char event_data[128];
   snprintf(event_data, sizeof(event_data), "voc_ticks=%u voc_index=%u pm25=%u", voc_ticks,
-           voc_index, data.PM_SP_UG_2_5);
+           voc_index, pms.pm25);
 
   Serial.println(event_data);
   remoteLogger->log(event_data, LEVEL_INFO);
